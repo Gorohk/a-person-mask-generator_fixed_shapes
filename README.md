@@ -4,6 +4,7 @@ Extension for Automatic1111 and ComfyUI to automatically create masks for Backgr
 Uses the [Multi-class selfie segmentation model](https://developers.google.com/mediapipe/solutions/vision/image_segmenter#multiclass-model) model by Google.
 
 ## Updates
+- 2026-04-02 - Forge/Neo & WebUI (Auto1111) compatibility fix. Resolved ValueError broadcast shape error that occurred in Forge/Neo. Changed mask generation logic from 4-channel to 2D binary approach. Now works across all platforms: Forge, Neo, Auto1111, and ComfyUI. (Fix assistance from DeepSeek)
 - 2025-02-19 - Adding mask refinement.  This creates a bounding box around the detected mask, then crops the image to the detected area, then runs a second pass for the mask detection. Especially helpful on large resolution images with the person far away.
 - 2025-02-07 - Fixing ComfyUI vs Auto1111 (improved ComfyUI by adding alpha channel to the image that gets passed to media pipe.  See [issue #47](https://github.com/djbielejeski/a-person-mask-generator/issues/47))
 - 2024-05-26 - Adding facial landmark mask outputs for ComfyUI
