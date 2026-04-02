@@ -50,14 +50,13 @@ class Script(scripts.Script):
 
         return mp.Image(image_format=image_format, data=numpy_image)
 
-    def generate_mask(self, image: Image, mask_targets: list[str], mask_dilation : int) -> Image:
+    def generate_mask(self, image: Image, mask_targets: list[str], mask_dilation: int) -> Image:
         if image is not None and len(mask_targets) > 0:
             model_folder_name = 'mediapipe'
             model_file_name = 'selfie_multiclass_256x256.tflite'
             model_folder_path = os.path.join(models_path, model_folder_name) if not models_path.endswith(model_folder_name) else models_path
             os.makedirs(model_folder_path, exist_ok=True)
         
-
             model_path = os.path.join(model_folder_path, model_file_name)
             model_url = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite'
             if not os.path.exists(model_path):
@@ -77,7 +76,7 @@ class Script(scripts.Script):
                 segmented_masks = segmenter.segment(media_pipe_image)
 
                 masks = []
-                for i, target in enumerate(mask_targets):
+                for target in mask_targets:
                     # https://developers.google.com/mediapipe/solutions/vision/image_segmenter#multiclass-model
                     # 0 - background
                     # 1 - hair
@@ -88,46 +87,46 @@ class Script(scripts.Script):
                     mask_index = 0
                     if target == MASK_OPTION_1_HAIR:
                         mask_index = 1
-                    if target == MASK_OPTION_2_BODY:
+                    elif target == MASK_OPTION_2_BODY:
                         mask_index = 2
-                    if target == MASK_OPTION_3_FACE:
+                    elif target == MASK_OPTION_3_FACE:
                         mask_index = 3
-                    if target == MASK_OPTION_4_CLOTHES:
+                    elif target == MASK_OPTION_4_CLOTHES:
                         mask_index = 4
+                    else:
+                        continue
 
-                    masks.append(segmented_masks.confidence_masks[mask_index])
+                    confidence_mask = segmented_masks.confidence_masks[mask_index].numpy_view()
+                    if len(confidence_mask.shape) == 3 and confidence_mask.shape[2] == 1:
+                        confidence_mask = confidence_mask[:, :, 0]
+                    masks.append(confidence_mask)
 
-                image_data = media_pipe_image.numpy_view()
-                image_shape = image_data.shape
+                if not masks:
+                    return None
 
-                # convert the image shape from "rgb" to "rgba" aka add the alpha channel
-                if image_shape[-1] == 3:
-                    image_shape = (image_shape[0], image_shape[1], 4)
+                image_shape = media_pipe_image.numpy_view().shape
+                height, width = image_shape[0], image_shape[1]
 
-                mask_background_array = np.zeros(image_shape, dtype=np.uint8)
-                mask_background_array[:] = (0, 0, 0, 255)
+                combined_mask = np.zeros((height, width), dtype=np.float32)
 
-                mask_foreground_array = np.zeros(image_shape, dtype=np.uint8)
-                mask_foreground_array[:] = (255, 255, 255, 255)
+                for mask in masks:
+                    combined_mask = np.maximum(combined_mask, mask)
 
-                mask_arrays = []
-                for i, mask in enumerate(masks):
-                    condition = np.stack((mask.numpy_view(),) * image_shape[-1], axis=-1) > 0.25
-                    mask_array = np.where(condition, mask_foreground_array, mask_background_array)
-                    mask_arrays.append(mask_array)
+                binary_mask = (combined_mask > 0.25).astype(np.uint8) * 255
 
-                # Merge our masks taking the maximum from each
-                merged_mask_arrays = reduce(np.maximum, mask_arrays)
+                if mask_dilation != 0:
+                    kernel_size = 2 * abs(mask_dilation) + 1
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+                    if mask_dilation > 0:
+                        binary_mask = cv2.dilate(binary_mask, kernel)
+                    else:
+                        binary_mask = cv2.erode(binary_mask, kernel)
 
-                # Dilate or erode the mask
-                if mask_dilation > 0:
-                    merged_mask_arrays = cv2.dilate(merged_mask_arrays, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*mask_dilation + 1, 2*mask_dilation + 1), (mask_dilation, mask_dilation)))
-                elif mask_dilation < 0:
-                    merged_mask_arrays = cv2.erode(merged_mask_arrays, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*mask_dilation + 1, 2*mask_dilation + 1), (mask_dilation, mask_dilation)))
+                mask_rgba = np.zeros((height, width, 4), dtype=np.uint8)
+                mask_rgba[binary_mask == 255] = [255, 255, 255, 255]
+                mask_rgba[binary_mask == 0] = [0, 0, 0, 255]
 
-                # Create the image
-                mask_image = Image.fromarray(merged_mask_arrays)
-
+                mask_image = Image.fromarray(mask_rgba, mode='RGBA')
                 return mask_image
         else:
             return None
@@ -265,7 +264,8 @@ class Script(scripts.Script):
     # Maybe there's a better way to do this?
     def after_component(self, component, **kwargs):
         def update_image(image: Image):
-            self.img2img = image
+            if image is not None:
+                self.img2img = image
 
         if component.elem_id == "img2img_image":
             self.img2img_image = component
